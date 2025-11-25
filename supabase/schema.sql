@@ -411,3 +411,38 @@ where con.contype = 'f';
 select event_object_table, trigger_name, action_timing, event_manipulation
 from information_schema.triggers
 where trigger_schema = 'public';
+
+
+-- 1) Drop the bad constraint if it exists
+ALTER TABLE IF EXISTS profiles
+  DROP CONSTRAINT IF EXISTS fk_profiles_auth_id;
+
+-- 2) Add an auth_id column to profiles (if you don't already have one)
+ALTER TABLE IF EXISTS profiles
+  ADD COLUMN IF NOT EXISTS auth_id uuid;
+
+-- 3) Add the correct foreign key linking profiles.auth_id -> auth.users(id)
+--    NOTE: Supabase creates the "auth" schema; make sure your project has auth.users table.
+ALTER TABLE IF EXISTS profiles
+  ADD CONSTRAINT fk_profiles_auth_id
+  FOREIGN KEY (auth_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+
+select table_name
+from information_schema.tables
+where table_schema = 'public'
+order by table_name;
+select
+  con.conname as constraint_name,
+  conrelid::regclass as table_from,
+  a.attname as column_from,
+  confrelid::regclass as table_to,
+  af.attname as column_to
+from pg_constraint con
+join lateral unnest(con.conkey) with ordinality as cols(attnum, ord) on true
+join pg_attribute a on a.attrelid = con.conrelid and a.attnum = cols.attnum
+join lateral unnest(con.confkey) with ordinality as cols2(attnum, ord2) on cols.ord = cols2.ord2
+join pg_attribute af on af.attrelid = con.confrelid and af.attnum = cols2.attnum
+where con.contype = 'f';
+select event_object_table, trigger_name, action_timing, event_manipulation
+from information_schema.triggers
+where trigger_schema = 'public';
