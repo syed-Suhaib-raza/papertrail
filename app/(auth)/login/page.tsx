@@ -33,17 +33,89 @@ export default function LoginPage() {
     }
   }
 
-  async function handleLogin(e: React.FormEvent) {
+async function handleLogin(e: React.FormEvent) {
   e.preventDefault();
-  console.log("DEBUG: handleLogin invoked — immediate log"); // <- should appear
+  setError(null);
+  setLoading(true);
+  console.log("Attempting login for:", email);
   try {
-    // tiny delay to show UI stays responsive
-    await new Promise((res) => setTimeout(res, 200));
-    console.log("DEBUG: after delay — no supabase call");
-  } catch(e) {
-    console.error("DEBUG: unexpected error in basic handler", e);
+    console.log("Starting sign-in process");
+    // 1) Sign in
+    const resp = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    const { data, error: signInError } = resp as any;
+    if (signInError) {
+      setError(signInError.message ?? "Sign in failed");
+      setLoading(false);
+      return;
+    }
+    console.log("Sign-in successful:", data);
+    const user = data?.user;
+    const session = data?.session;
+    if (!user || !session) {
+      setError("Login did not return an active session. Check auth settings.");
+      setLoading(false);
+      return;
+    }
+    console.log("User and session obtained:", user.id, session);
+    // 2) Ensure profile exists (RLS will allow this because user is authenticated)
+    try {
+      const { data: existing, error: existsErr } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("auth_id", user.id)
+        .limit(1)
+        .maybeSingle();
+
+      if (existsErr) {
+        // Unexpected error checking profile - surface message but continue cautiously
+        console.error("profiles select error:", existsErr);
+      }
+      console.log("Profile existence check:", existing);
+      if (!existing) {
+        const { error: insertErr } = await supabase
+          .from("profiles")
+          .insert({
+            auth_id: user.id,
+            full_name: user.user_metadata?.full_name ?? null,
+            email: user.email,
+            role: "author",
+          });
+
+        if (insertErr) {
+          // RLS or other DB error
+          setError("Profile creation failed: " + insertErr.message);
+          setLoading(false);
+          return;
+        }
+      }
+    } catch (profErr) {
+      console.error("ensureProfile unexpected error:", profErr);
+      setError("Failed to ensure profile. See console for details.");
+      setLoading(false);
+      return;
+    }
+
+    // 3) Redirect to dashboard (replace so login is not in history)
+    try {
+        console.log("Navigating to dashboard");
+        router.replace("/dashboard");
+    } catch (navErr) {
+      // fallback: force a browser navigation if router fails
+      console.warn("router.replace failed, falling back to window.location:", navErr);
+      window.location.href = "/dashboard";
+    }
+  } catch (err: any) {
+    console.error("handleLogin unexpected error:", err);
+    setError(err?.message ?? "Unexpected login error");
+  } finally {
+    setLoading(false);
   }
 }
+
 
 
 
@@ -55,9 +127,7 @@ export default function LoginPage() {
   }, [router]);
 
   return (
-    <AuthForm title="Sign in to PaperTrail">
-      <form onSubmit={handleLogin} className="space-y-4">
-
+    <AuthForm title="Sign in to Papertrail">
         <div>
           <label className="block text-sm mb-1">Email</label>
           <input
@@ -82,15 +152,7 @@ export default function LoginPage() {
           />
         </div>
 
-        {error && (
-          <div className="text-red-600 text-sm">
-            {error}
-          </div>
-        )}
-
-        <button type="submit" className="btn btn-primary w-full" disabled={loading}>
-          {loading ? "Signing in…" : "Login"}
-        </button>
+        <button className="btn mt-4 mb-4 w-full" onClick={handleLogin}> {loading?"Signing in...":"Login"} </button>
 
         <button
           type="button"
@@ -99,7 +161,6 @@ export default function LoginPage() {
         >
           Need an account? Register
         </button>
-      </form>
-    </AuthForm>
+        </AuthForm>
   );
 }

@@ -870,13 +870,36 @@ FOR DELETE
 USING ( is_admin() OR is_editor() );
 
 
--- -----------------------------
--- FINAL NOTES
--- -----------------------------
--- 1) After applying policies: test with at least four accounts (author, reviewer, editor, admin).
--- 2) For fields that should remain private (e.g., plagiarism_reports.raw_result, reviewer identities when anonymity needed),
---    consider creating Postgres VIEWs that mask sensitive fields and expose only the allowed columns; then apply public policies to views as needed.
--- 3) If you need stricter constraints (e.g., prevent editors from changing created_by), modify the WITH CHECK expressions accordingly.
--- 4) If you want, I can also generate a small seed script (seed.sql) that creates test profiles and sample data to validate these policies.
+-- 1) Safety: drop the problematic policies on public.profiles
+DROP POLICY IF EXISTS profiles_select_self_or_admin ON public.profiles;
+DROP POLICY IF EXISTS profiles_insert_own ON public.profiles;
+DROP POLICY IF EXISTS profiles_update_self_or_admin ON public.profiles;
+DROP POLICY IF EXISTS profiles_delete_admin ON public.profiles;
+
+-- 2) Recreate minimal, non-recursive policies for profiles
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+
+-- allow authenticated user to select their own profile only
+CREATE POLICY profiles_select_self
+ON public.profiles
+FOR SELECT
+USING ( auth.uid() = auth_id );
+
+-- allow a user to create a profile row only for themselves
+CREATE POLICY profiles_insert_own
+ON public.profiles
+FOR INSERT
+WITH CHECK ( auth.uid() = auth_id );
+
+-- allow a user to update only their own profile
+CREATE POLICY profiles_update_self
+ON public.profiles
+FOR UPDATE
+USING ( auth.uid() = auth_id )
+WITH CHECK ( auth.uid() = auth_id );
+
+-- (Remove admin delete via policy — use service-role or a special admin flow instead)
+-- If you later want admins to delete profiles, implement a server-side endpoint using the service-role key.
+
 
 -- End of policies.sql
