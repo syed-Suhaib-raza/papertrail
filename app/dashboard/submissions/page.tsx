@@ -30,7 +30,6 @@ export default function SubmissionsPageClient() {
           return;
         }
 
-        // RLS: authors may SELECT papers they created (policies in policies.sql). We query as the signed-in user.
         const { data, error } = await supabase
           .from('papers')
           .select('id, title, abstract, status, created_at, current_version')
