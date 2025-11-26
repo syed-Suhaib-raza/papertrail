@@ -26,7 +26,7 @@ export default function SubmissionsPageClient() {
         const { data: userData } = await supabase.auth.getUser();
         const user = userData?.user;
         if (!user) {
-          router.push('/auth/login');
+          router.push('/login');
           return;
         }
 
