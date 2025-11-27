@@ -1,6 +1,3 @@
-// app/(auth)/register/page.tsx
-// Traceability: /mnt/data/23k-0621_SyedSuhaibRaza_ProjectProp.docx
-
 "use client";
 
 import { useState } from "react";
@@ -15,6 +12,7 @@ export default function RegisterPage() {
   const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole]         = useState("author");
+  const [cat, setCat]           = useState(0);
 
   const [loading, setLoading]   = useState(false);
   const [error, setError]       = useState<string | null>(null);
@@ -25,13 +23,14 @@ export default function RegisterPage() {
       .select("id")
       .eq("auth_id", userId)
       .maybeSingle();
-
+    console.log(cat)
     if (!exists) {
       const { error: pErr } = await supabase.from("profiles").insert({
         auth_id: userId,
         full_name: fullName,
         email,
         role,
+        spec:cat,
       });
 
       if (pErr) throw new Error(pErr.message);
@@ -122,6 +121,25 @@ export default function RegisterPage() {
             <option value="editor">Editor</option>
           </select>
         </div>
+        {(role === 'reviewer') && (
+          <div>
+          <label className="block text-sm mb-1">Specialty</label>
+          <select
+            className="select select-bordered w-full"
+            value={cat}
+            onChange={(e) => {
+              const val = e.target.value;
+              setCat(Number(val));
+              console.log(cat);
+            }}
+          >
+            <option value=''>Select Specialty</option>
+            <option value='1'>Aritificial Intelligence</option>
+            <option value='2'>Mathematics</option>
+            <option value='3'>Computer Networks</option>
+          </select>
+        </div>
+        )}
 
         {error && (
           <div className="text-red-600 text-sm">
