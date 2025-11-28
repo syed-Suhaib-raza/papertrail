@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
+import { logReviewerActivity } from '@/lib/reviewerAnalytics';
 
 type DebugPayload = {
   error?: string;
@@ -30,7 +31,30 @@ export default function ReviewWorkspaceClient() {
   const [decision, setDecision] = useState<'accept' | 'reject' | 'major_revision' | 'minor_revision' | ''>('');
   const [score, setScore] = useState<number | ''>('');
 
+  // track current reviewer profile
+  const [profile, setProfile] = useState<any | null>(null);
+
   const basePath = '/api/reviewers/assignments';
+
+  async function fetchProfileForUserId(authUserId: string) {
+    try {
+      const { data: profileData, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('auth_id', authUserId)
+        .maybeSingle();
+
+      if (error) {
+        console.error('fetchProfileForUserId error', error);
+        return null;
+      }
+      return profileData;
+    } catch (err) {
+      console.error('fetchProfileForUserId exception', err);
+      return null;
+    }
+  }
+
   async function updateStatus(id: string, status: string) {
     const { data: sessionData } = await supabase.auth.getSession();
     const accessToken = sessionData?.session?.access_token;
@@ -48,6 +72,21 @@ export default function ReviewWorkspaceClient() {
       alert('Failed to update status');
       return;
     }
+
+    // Log the status update as reviewer activity (RLS will ensure correct reviewer)
+    try {
+      if (profile?.id) {
+        await logReviewerActivity({
+          reviewerId: profile.id,
+          assignmentId: id,
+          action: `assignment_status_${status}`,
+          details: { status }
+        });
+      }
+    } catch (err) {
+      console.warn('failed to log status update', err);
+    }
+
     location.reload();
   }
 
@@ -58,6 +97,7 @@ export default function ReviewWorkspaceClient() {
       setLoading(true);
       setDebug(null);
       setAssignment(null);
+      setProfile(null);
 
       if (!id) {
         setDebug({ error: 'Route param id is missing (useParams returned empty)' });
@@ -81,6 +121,7 @@ export default function ReviewWorkspaceClient() {
           return;
         }
 
+        // fetch the assignment from your server route
         const reqUrl = `${basePath}/${encodeURIComponent(id)}`;
         const res = await fetch(reqUrl, {
           headers: { Authorization: `Bearer ${accessToken}` },
@@ -95,6 +136,28 @@ export default function ReviewWorkspaceClient() {
           setAssignment(null);
         } else {
           setAssignment(json.data ?? null);
+
+          // retrieve profile for current auth user (so we can log reviewer actions)
+          const { data: userData } = await supabase.auth.getUser();
+          const user = userData?.user ?? null;
+          if (user) {
+            const prof = await fetchProfileForUserId(user.id);
+            if (mounted) setProfile(prof);
+
+            // log a page view for analytics (only if profile exists)
+            try {
+              if (prof?.id) {
+                await logReviewerActivity({
+                  reviewerId: prof.id,
+                  assignmentId: id,
+                  action: 'view_assignment',
+                  details: { paperId: json?.data?.paper_id ?? json?.data?.paper?.id ?? null }
+                });
+              }
+            } catch (err) {
+              console.warn('Failed to log view_assignment', err);
+            }
+          }
         }
       } catch (err: any) {
         console.error('Fetch assignment error', err);
@@ -102,6 +165,7 @@ export default function ReviewWorkspaceClient() {
       } finally {
         if (mounted) setLoading(false);
       }
+
     })();
 
     return () => { mounted = false; };
@@ -129,14 +193,9 @@ export default function ReviewWorkspaceClient() {
       }
 
       // 2) fetch profile
-      const { data: profile, error: profileErr } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('auth_id', user.id)
-        .maybeSingle();
-
-      if (profileErr || !profile) {
-        setDebug({ error: 'Profile not found for current auth user', details: profileErr?.message });
+      const prof = profile ?? await fetchProfileForUserId(user.id);
+      if (!prof) {
+        setDebug({ error: 'Profile not found for current auth user', details: 'profile missing' });
         alert('Profile not found — cannot submit review');
         setSubmitting(false);
         return;
@@ -183,6 +242,18 @@ export default function ReviewWorkspaceClient() {
         return;
       }
 
+      // Log 'clicked_submit' before calling the server (best-effort)
+      try {
+        await logReviewerActivity({
+          reviewerId: prof.id,
+          assignmentId: id,
+          action: 'clicked_submit',
+          details: { paperId: assignment?.paper_id ?? assignment?.paper?.id ?? null }
+        });
+      } catch (err) {
+        console.warn('failed to log clicked_submit', err);
+      }
+
       // 4) submit to API
       const reqUrl = `${basePath}/${encodeURIComponent(id)}`; // id is assignment id
       const res = await fetch(reqUrl, {
@@ -207,7 +278,19 @@ export default function ReviewWorkspaceClient() {
         return;
       }
 
-      // 5) ensure COI exists (same as before)
+      // 5) log successful submission (redundant with DB trigger but useful for front-end analytics)
+      try {
+        await logReviewerActivity({
+          reviewerId: prof.id,
+          assignmentId: id,
+          action: 'submitted_review',
+          details: { paperId: assignment?.paper_id ?? assignment?.paper?.id ?? null, overall_score: score, recommendation: decision }
+        });
+      } catch (err) {
+        console.warn('failed to log submitted_review', err);
+      }
+
+      // 6) ensure COI exists (same as before)
       const paperId = assignment?.paper_id;
       if (!paperId) {
         setDebug({ error: 'assignment.paper_id missing; cannot check COI' });
@@ -221,7 +304,7 @@ export default function ReviewWorkspaceClient() {
         .from('coi_declarations')
         .select('*')
         .eq('paper_id', paperId)
-        .eq('user_id', profile.id)
+        .eq('user_id', prof.id)
         .maybeSingle();
 
       if (coiErr) {
@@ -293,6 +376,20 @@ export default function ReviewWorkspaceClient() {
             rel="noreferrer"
             href={`https://uvshmzbfklarlovrxmts.supabase.co/storage/v1/object/public/papers/${assignment.latest_version.file_path}`}
             className="underline"
+            onClick={async () => {
+              try {
+                if (profile?.id) {
+                  await logReviewerActivity({
+                    reviewerId: profile.id,
+                    assignmentId: id,
+                    action: 'download_manuscript',
+                    details: { file_path: assignment.latest_version.file_path, paperId: assignment.paper_id ?? assignment.paper?.id ?? null }
+                  });
+                }
+              } catch (err) {
+                console.warn('failed to log download_manuscript', err);
+              }
+            }}
           >
             Download manuscript (latest)
           </a>

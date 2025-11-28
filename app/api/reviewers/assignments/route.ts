@@ -7,25 +7,36 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in env');
 }
-const srv = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+// Server-side service role client
+const srv = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false },
+});
 
 async function getUserFromToken(token: string | null) {
   if (!token) return null;
   const { data, error } = await srv.auth.getUser(token);
-  console.log(data);
-  if (error || !data?.user) return null;
+  if (error || !data?.user) {
+    console.error('srv.auth.getUser error', error);
+    return null;
+  }
   return data.user;
 }
 
 export async function GET(req: Request) {
   try {
-    const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '') || null;
-    if (!token) return NextResponse.json({ error: 'Missing Authorization token' }, { status: 401 });
+    // accept Authorization header: "Bearer <token>"
+    const tokenHeader = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '') || null;
+    if (!tokenHeader) {
+      return NextResponse.json({ error: 'Missing Authorization token' }, { status: 401 });
+    }
 
-    const user = await getUserFromToken(token);
-    if (!user) return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+    const user = await getUserFromToken(tokenHeader);
+    if (!user) {
+      return NextResponse.json({ error: 'Invalid token or user not found' }, { status: 401 });
+    }
 
-    // Look up profile_id (if you have a profiles table linking auth_id -> profile id)
+    // find profile row that links auth user -> profiles.id
     const { data: profileRows, error: profileErr } = await srv
       .from('profiles')
       .select('id, auth_id')
@@ -34,17 +45,21 @@ export async function GET(req: Request) {
 
     if (profileErr) {
       console.error('Error fetching profile for auth_id', profileErr);
-      // continue — we can still try with auth user id
     }
 
     const profileId = Array.isArray(profileRows) && profileRows.length ? profileRows[0].id : null;
+    console.log('GET assignments for auth user id:', user.id, 'profile id:', profileId);
 
-    // Query assignments where reviewer_id matches either the auth user id OR the profile id
-    // (this handles whichever approach your DB uses)
-    const reviewerCandidates = [user.id];
-    console.log('Profile ID:', profileId);
-    if (profileId && profileId !== user.id) reviewerCandidates.push(profileId);
+    if (!profileId) {
+      // No profile mapping — return empty array with hint so client can show actionable message.
+      return NextResponse.json({
+        data: [],
+        info: 'no_profile',
+        message: 'No profile row found linking this auth user to a profiles.id — create a profiles row with auth_id = auth user id'
+      });
+    }
 
+    // Query assignments where reviewer_id equals profileId
     const { data: assignmentsRows, error: assignmentsError } = await srv
       .from('review_assignments')
       .select(`
@@ -59,7 +74,7 @@ export async function GET(req: Request) {
         notes,
         papers ( id, title, abstract, current_version, status )
       `)
-      .in('reviewer_id', reviewerCandidates)
+      .eq('reviewer_id', profileId)
       .order('due_date', { ascending: true });
 
     if (assignmentsError) {
@@ -67,15 +82,10 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: 'DB error fetching assignments', details: assignmentsError.message }, { status: 500 });
     }
 
-    const assignments = (assignmentsRows || []) as any[];
+    const assignments = assignmentsRows || [];
 
-    if (!assignments.length) {
-      // no assignments found — return empty array (client can show helpful message)
-      return NextResponse.json({ data: [] });
-    }
-
-    // fetch latest versions for each paper_id (two-step)
-    const paperIds = Array.from(new Set(assignments.map(a => a.paper_id).filter(Boolean)));
+    // fetch latest paper_versions for each paper_id
+    const paperIds = Array.from(new Set(assignments.map((a: any) => a.paper_id).filter(Boolean)));
     let latestByPaper: Record<string, any> = {};
     if (paperIds.length) {
       const { data: versionsRows, error: versionsError } = await srv
@@ -86,7 +96,6 @@ export async function GET(req: Request) {
 
       if (versionsError) {
         console.error('Error fetching paper_versions:', versionsError);
-        // proceed with null latest_version
       } else {
         for (const v of versionsRows || []) {
           if (!latestByPaper[v.paper_id]) latestByPaper[v.paper_id] = v;
@@ -94,10 +103,10 @@ export async function GET(req: Request) {
       }
     }
 
-    const mapped = assignments.map(a => ({
+    const mapped = assignments.map((a: any) => ({
       ...a,
       latest_version: latestByPaper[a.paper_id] ?? null,
-      paper: a.papers ?? null
+      paper: a.papers ?? null,
     }));
 
     return NextResponse.json({ data: mapped });
