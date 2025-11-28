@@ -9,13 +9,25 @@ export default function RegisterPage() {
   const router = useRouter();
 
   const [fullName, setFullName] = useState("");
-  const [email, setEmail]       = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole]         = useState("author");
-  const [cat, setCat]           = useState(0);
+  const [role, setRole] = useState("author");
+  const [cat, setCat] = useState(0);
 
-  const [loading, setLoading]   = useState(false);
-  const [error, setError]       = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function saveTokenToServer(access_token: string, expires_at?: number) {
+    try {
+      await fetch("/api/save-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ access_token, expires_at }),
+      });
+    } catch (err) {
+      console.warn("Failed to save token to server cookie:", err);
+    }
+  }
 
   async function createProfileIfMissing(userId: string) {
     const { data: exists } = await supabase
@@ -23,14 +35,14 @@ export default function RegisterPage() {
       .select("id")
       .eq("auth_id", userId)
       .maybeSingle();
-    console.log(cat)
+
     if (!exists) {
       const { error: pErr } = await supabase.from("profiles").insert({
         auth_id: userId,
         full_name: fullName,
         email,
         role,
-        spec:cat,
+        spec: cat,
       });
 
       if (pErr) throw new Error(pErr.message);
@@ -42,32 +54,45 @@ export default function RegisterPage() {
     setError(null);
     setLoading(true);
 
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
-    });
-
-    if (signUpError) {
-      setError(signUpError.message);
-      setLoading(false);
-      return;
-    }
-
-    const user = data.user;
-    if (!user) {
-      setError("Registration succeeded, but the session was not created.");
-      setLoading(false);
-      return;
-    }
-
     try {
-      await createProfileIfMissing(user.id);
-      router.push("/dashboard");
-    } catch (err: any) {
-      setError("Failed to create profile: " + err.message);
-    }
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+      });
 
-    setLoading(false);
+      if (signUpError) {
+        setError(signUpError.message);
+        setLoading(false);
+        return;
+      }
+
+      const user = data.user;
+      const session = data.session;
+
+      if (!user) {
+        setError("Registration succeeded, but the session was not created.");
+        setLoading(false);
+        return;
+      }
+
+      // If signup returned a session (depends on provider/settings), set cookie
+      if (session?.access_token) {
+        await saveTokenToServer(session.access_token, session.expires_at);
+      }
+
+      await createProfileIfMissing(user.id);
+
+      // If session was created we can go directly to dashboard; otherwise go to login
+      if (session?.access_token) {
+        router.push("/dashboard");
+      } else {
+        router.push("/login");
+      }
+    } catch (err: any) {
+      setError("Failed to create profile: " + (err?.message ?? String(err)));
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -121,41 +146,30 @@ export default function RegisterPage() {
             <option value="editor">Editor</option>
           </select>
         </div>
-        {(role === 'reviewer') && (
-          <div>
-          <label className="block text-sm mb-1">Specialty</label>
-          <select
-            className="select select-bordered w-full"
-            value={cat}
-            onChange={(e) => {
-              const val = e.target.value;
-              setCat(Number(val));
-              console.log(cat);
-            }}
-          >
-            <option value=''>Select Specialty</option>
-            <option value='1'>Aritificial Intelligence</option>
-            <option value='2'>Mathematics</option>
-            <option value='3'>Computer Networks</option>
-          </select>
-        </div>
-        )}
 
-        {error && (
-          <div className="text-red-600 text-sm">
-            {error}
+        {role === "reviewer" && (
+          <div>
+            <label className="block text-sm mb-1">Specialty</label>
+            <select
+              className="select select-bordered w-full"
+              value={cat}
+              onChange={(e) => setCat(Number(e.target.value))}
+            >
+              <option value="">Select Specialty</option>
+              <option value="1">Artificial Intelligence</option>
+              <option value="2">Mathematics</option>
+              <option value="3">Computer Networks</option>
+            </select>
           </div>
         )}
+
+        {error && <div className="text-red-600 text-sm">{error}</div>}
 
         <button type="submit" className="btn btn-primary w-full" disabled={loading}>
           {loading ? "Creating account…" : "Register"}
         </button>
 
-        <button
-          type="button"
-          className="btn btn-ghost w-full"
-          onClick={() => router.push("/login")}
-        >
+        <button type="button" className="btn btn-ghost w-full" onClick={() => router.push("/login")}> 
           Already have an account? Log in
         </button>
       </form>
