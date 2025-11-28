@@ -179,21 +179,39 @@ export async function POST(req: Request, context: { params: any }) {
     // Allowed — now process actions
 if (action === 'submit_review') {
   const { review_text, overall_score, recommendation, is_anonymous } = payload || {};
+
+  // Basic validations
   if (!review_text || review_text.trim().length < 10) {
     return NextResponse.json({ error: 'Review text too short' }, { status: 400 });
   }
 
+  // Validate overall_score: must be integer 0..5 (user requested integer out of 5)
+  const parsedScore = overall_score === null || overall_score === undefined ? null : Number(overall_score);
+  if (parsedScore === null || Number.isNaN(parsedScore)) {
+    return NextResponse.json({ error: 'overall_score is required and must be an integer 0..5' }, { status: 400 });
+  }
+  if (!Number.isInteger(parsedScore) || parsedScore < 0 || parsedScore > 5) {
+    return NextResponse.json({ error: 'overall_score must be an integer between 0 and 5' }, { status: 400 });
+  }
+
+  // Validate recommendation against allowed enum values
+  const allowed = ['accept', 'reject', 'major_revision', 'minor_revision'];
+  if (!recommendation || !allowed.includes(recommendation)) {
+    return NextResponse.json({ error: 'Invalid recommendation value' }, { status: 400 });
+  }
+
   // IMPORTANT: use assgn.reviewer_id (the DB value) to satisfy foreign key constraints.
-  // assgn.reviewer_id may be a profiles.id or auth.users.id depending on how your DB is designed.
   const insertObj = {
     assignment_id: assignmentId,
     paper_id: assgn.paper_id,
     reviewer_id: assgn.reviewer_id, // <-- use DB's reviewer id (not user.id)
     review_text,
-    overall_score: overall_score ?? null,
-    recommendation: recommendation ?? null,
+    ratings: null,
+    overall_score: parsedScore, // integer 0..5
+    recommendation,
     is_anonymous: !!is_anonymous,
     submitted_at: new Date().toISOString(),
+    created_at: new Date().toISOString(),
   };
 
   const { data: reviewRow, error: revErr } = await srv

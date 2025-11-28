@@ -80,7 +80,7 @@ export default function SubmissionsPageClient() {
               <div className="flex flex-col items-end">
                 <div className="px-3 py-1 rounded-full text-sm border">{p.status}</div>
                 <div className="mt-3 flex gap-2">
-                  <button onClick={() => router.push(`/dashboard/submissions/${p.id}`)} className="text-sm underline">View</button>
+                  <button onClick={() => router.push(`/dashboard/submissions/${p.id}/reviews`)} className="text-sm underline">Reviews</button>
                   <button onClick={() => router.push(`/dashboard/submissions/${p.id}/edit`)} className="text-sm underline">Edit</button>
                 </div>
               </div>

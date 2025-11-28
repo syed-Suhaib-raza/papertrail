@@ -1,4 +1,3 @@
-// app/dashboard/review/[id]/page.tsx  (client)
 'use client';
 
 import React, { useEffect, useState } from 'react';
@@ -27,27 +26,30 @@ export default function ReviewWorkspaceClient() {
   const [submitting, setSubmitting] = useState(false);
   const [debug, setDebug] = useState<DebugPayload | null>(null);
 
+  // New states for decision + score
+  const [decision, setDecision] = useState<'accept' | 'reject' | 'major_revision' | 'minor_revision' | ''>('');
+  const [score, setScore] = useState<number | ''>('');
+
   const basePath = '/api/reviewers/assignments';
   async function updateStatus(id: string, status: string) {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const accessToken = sessionData?.session?.access_token;
-      if (!accessToken) { alert('Not authenticated'); return; }
-  
-      const res = await fetch(`/api/reviewers/assignments/${id}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ action: 'update_status', payload: { status } }),
-      });
-  
-      if (!res.ok) {
-        const txt = await res.text();
-        console.error('updateStatus failed', txt);
-        alert('Failed to update status');
-        return;
-      }
-      // Simple refresh; you can replace with optimistic UI update
-      location.reload();
+    const { data: sessionData } = await supabase.auth.getSession();
+    const accessToken = sessionData?.session?.access_token;
+    if (!accessToken) { alert('Not authenticated'); return; }
+
+    const res = await fetch(`/api/reviewers/assignments/${id}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ action: 'update_status', payload: { status } }),
+    });
+
+    if (!res.ok) {
+      const txt = await res.text();
+      console.error('updateStatus failed', txt);
+      alert('Failed to update status');
+      return;
     }
+    location.reload();
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -64,7 +66,6 @@ export default function ReviewWorkspaceClient() {
       }
 
       try {
-        // Get session & user (supabase v2)
         const { data: sessionData } = await supabase.auth.getSession();
         const session = sessionData?.session ?? null;
         if (!session) {
@@ -73,7 +74,6 @@ export default function ReviewWorkspaceClient() {
           return;
         }
 
-        // access token string to authenticate the fetch call's Authorization header
         const accessToken = session.access_token;
         if (!accessToken) {
           setDebug({ error: 'No access token available in session' });
@@ -118,7 +118,7 @@ export default function ReviewWorkspaceClient() {
     }
 
     try {
-      // 1) get auth user from supabase client
+      // 1) auth user
       const { data: userData, error: userErr } = await supabase.auth.getUser();
       const user = userData?.user ?? null;
       if (userErr || !user) {
@@ -128,7 +128,7 @@ export default function ReviewWorkspaceClient() {
         return;
       }
 
-      // 2) fetch profile row (profiles.auth_id -> auth.users.id)
+      // 2) fetch profile
       const { data: profile, error: profileErr } = await supabase
         .from('profiles')
         .select('*')
@@ -142,7 +142,7 @@ export default function ReviewWorkspaceClient() {
         return;
       }
 
-      // 3) Submit review to API (use the stored session token)
+      // 3) get access token for calling server route (server validates)
       const { data: sessionData } = await supabase.auth.getSession();
       const session = sessionData?.session ?? null;
       const accessToken = session?.access_token;
@@ -153,6 +153,37 @@ export default function ReviewWorkspaceClient() {
         return;
       }
 
+      // Client-side validations
+      if (!reviewText || reviewText.trim().length < 10) {
+        setDebug({ error: 'Review text too short' });
+        alert('Please write at least 10 characters for the review.');
+        setSubmitting(false);
+        return;
+      }
+
+      if (score === '') {
+        setDebug({ error: 'Score missing' });
+        alert('Please give an integer score between 0 and 5.');
+        setSubmitting(false);
+        return;
+      }
+
+      if (!Number.isInteger(score) || score < 0 || score > 5) {
+        setDebug({ error: 'Score must be an integer 0..5' });
+        alert('Score must be an integer between 0 and 5.');
+        setSubmitting(false);
+        return;
+      }
+
+      const allowedDecisions = ['accept', 'reject', 'major_revision', 'minor_revision'];
+      if (!decision || !allowedDecisions.includes(decision)) {
+        setDebug({ error: 'Decision missing or invalid' });
+        alert('Please select a recommendation (accept/reject/major_revision/minor_revision).');
+        setSubmitting(false);
+        return;
+      }
+
+      // 4) submit to API
       const reqUrl = `${basePath}/${encodeURIComponent(id)}`; // id is assignment id
       const res = await fetch(reqUrl, {
         method: 'POST',
@@ -161,8 +192,8 @@ export default function ReviewWorkspaceClient() {
           action: 'submit_review',
           payload: {
             review_text: reviewText,
-            overall_score: null,
-            recommendation: null,
+            overall_score: score,
+            recommendation: decision,
             is_anonymous: false,
           },
         }),
@@ -176,8 +207,7 @@ export default function ReviewWorkspaceClient() {
         return;
       }
 
-      // 4) Ensure COI exists for this user & paper before allowing review flow to continue.
-      //    Use profile.id (not JWT) to query coi_declarations (RLS expects user_id = profile.id).
+      // 5) ensure COI exists (same as before)
       const paperId = assignment?.paper_id;
       if (!paperId) {
         setDebug({ error: 'assignment.paper_id missing; cannot check COI' });
@@ -195,7 +225,6 @@ export default function ReviewWorkspaceClient() {
         .maybeSingle();
 
       if (coiErr) {
-        // DB-level error fetching COI
         setDebug({ dbError: coiErr });
         alert('Warning: could not verify COI due to DB error. Contact admin.');
         router.push('/dashboard/review');
@@ -204,13 +233,14 @@ export default function ReviewWorkspaceClient() {
       }
 
       if (!coi) {
-        // No COI declared — redirect reviewer to COI page
         router.push(`/dashboard/review/${id}/coi`);
         setSubmitting(false);
         return;
       }
+
+      // mark assignment as submitted (server also attempts)
       updateStatus(id, 'submitted');
-      // All good
+
       alert('Review submitted successfully');
       router.push('/dashboard/review');
     } catch (err: any) {
@@ -272,6 +302,7 @@ export default function ReviewWorkspaceClient() {
       </div>
 
       <div className="mt-4">
+        <label className="block text-sm font-medium">Your review</label>
         <textarea
           value={reviewText}
           onChange={(e) => setReviewText(e.target.value)}
@@ -279,6 +310,60 @@ export default function ReviewWorkspaceClient() {
           className="w-full border rounded p-2"
           placeholder="Write your review..."
         />
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div>
+          <label className="block text-sm font-medium">Recommendation</label>
+          <select
+            value={decision}
+            onChange={(e) => setDecision(e.target.value as any)}
+            className="w-full border rounded p-2"
+          >
+            <option value="">Select recommendation...</option>
+            <option value="accept">Accept</option>
+            <option value="minor_revision">Minor revision</option>
+            <option value="major_revision">Major revision</option>
+            <option value="reject">Reject</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium">Score (0–5)</label>
+          <input
+            type="number"
+            min={0}
+            max={5}
+            step={1}
+            value={score === '' ? '' : String(score)}
+            onChange={(e) => {
+              const val = e.target.value;
+              if (val === '') return setScore('');
+              const n = Number(val);
+              if (!Number.isFinite(n)) return;
+              setScore(Math.trunc(n));
+            }}
+            className="w-full border rounded p-2"
+            placeholder="e.g. 4"
+          />
+          <div className="text-xs text-gray-500 mt-1">Integer score used for overall_score in DB.</div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium">Anonymity</label>
+          <div className="mt-2">
+            <label className="inline-flex items-center">
+              <input
+                type="checkbox"
+                checked={false}
+                readOnly
+                className="mr-2"
+              />
+              Reviews are currently non-anonymous (toggle not implemented).
+            </label>
+            <div className="text-xs text-gray-500 mt-1">If you want anonymous reviews, we can add a toggle; currently submissions send <code>is_anonymous: false</code>.</div>
+          </div>
+        </div>
       </div>
 
       <div className="mt-4 flex gap-2">
@@ -302,6 +387,13 @@ export default function ReviewWorkspaceClient() {
         <strong>Assignment meta:</strong>
         <pre style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{JSON.stringify(assignment, null, 2)}</pre>
       </div>
+
+      {debug && (
+        <div className="mt-6 p-4 bg-gray-50 border rounded text-sm">
+          <strong>Client debug:</strong>
+          <pre style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{JSON.stringify(debug, null, 2)}</pre>
+        </div>
+      )}
     </div>
   );
 }
