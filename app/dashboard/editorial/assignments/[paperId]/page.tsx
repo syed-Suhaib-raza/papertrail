@@ -22,6 +22,7 @@ export default function AssignReviewerToPaper() {
   const router = useRouter();
 
   const [paper, setPaper] = useState<Paper | null>(null);
+  const [user, setUser] = useState<any>(null);
   const [reviewers, setReviewers] = useState<Reviewer[]>([]);
   const [reviewerId, setReviewerId] = useState('');
   const [dueDate, setDueDate] = useState('');
@@ -39,6 +40,8 @@ export default function AssignReviewerToPaper() {
         data: { user },
         error: userErr
       } = await supabase.auth.getUser();
+      console.log('auth getUser', user, userErr);
+      setUser(user);
 
       if (userErr || !user) {
         setUnauthorized(true);
@@ -46,7 +49,6 @@ export default function AssignReviewerToPaper() {
         return;
       }
 
-      // verify role
       const { data: profile, error: profErr } = await supabase
         .from('profiles')
         .select('id, role')
@@ -69,7 +71,7 @@ export default function AssignReviewerToPaper() {
       // load paper
       const { data: paperData, error: paperErr } = await supabase
         .from('papers')
-        .select('id, title, status,category_id')
+        .select('id, title, status, category_id')
         .eq('id', paperId)
         .single();
 
@@ -79,24 +81,14 @@ export default function AssignReviewerToPaper() {
       } else {
         setPaper(paperData as Paper);
       }
-
-      // load reviewers
-      const { data: reviewerData, error: revErr } = await supabase
-        .from('profiles')
-        .select('id, full_name,spec')
-        .eq('role', 'reviewer');
-
-      if (revErr) {
-        console.error('reviewers fetch error', revErr);
-        setReviewers([]);
+      const resp = await fetch(`/api/reviewers?categoryId=${paperData?.category_id}`);
+        if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error('Failed to load reviewers: ' + resp.status + ' ' + text);
       } else {
-        for (let i=0; i<reviewerData?.length || -1;i++){
-            if (reviewerData[i].spec !== paperData?.category_id) {
-                reviewerData?.splice(i,1);
-            }
+        const { reviewers } = await resp.json();
+        setReviewers(reviewers || []);
         }
-        setReviewers((reviewerData as Reviewer[]) || []);
-      }
 
       setLoading(false);
     };
@@ -110,16 +102,19 @@ export default function AssignReviewerToPaper() {
     setSubmitting(true);
 
     try {
-      const res = await fetch('/api/assign-reviewer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          paperId,
-          reviewerId,
-          dueDate: dueDate || null,
-          priority
-        })
-      });
+      const { data } = await supabase.auth.getSession();
+const token = data?.session?.access_token;
+const res = await fetch('/api/assign-reviewer', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`
+  },
+  body: JSON.stringify({ paperId, reviewerId, dueDate, priority })
+});
+
+
+
 
       const json = await res.json();
       if (!res.ok) {

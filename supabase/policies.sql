@@ -898,8 +898,14 @@ FOR UPDATE
 USING ( auth.uid() = auth_id )
 WITH CHECK ( auth.uid() = auth_id );
 
--- (Remove admin delete via policy — use service-role or a special admin flow instead)
--- If you later want admins to delete profiles, implement a server-side endpoint using the service-role key.
+-- allow editors/admins to SELECT profiles
+DROP POLICY IF EXISTS profiles_select_self ON public.profiles;
+
+CREATE POLICY profiles_select_editor_admin
+ON public.profiles
+FOR SELECT
+USING ( auth.uid() = auth_id OR is_editor() OR is_admin() );
+
 
 
 -- End of policies.sql

@@ -21,6 +21,10 @@ export default function SubmissionsPageClient() {
   useEffect(() => {
     let mounted = true;
     async function load() {
+      console.log("DEBUG:")
+      const { data } = await supabase.auth.getUser();
+      console.log(data?.user?.id);
+
       setLoading(true);
       try {
         const { data: userData } = await supabase.auth.getUser();
@@ -44,6 +48,7 @@ export default function SubmissionsPageClient() {
       }
     }
     load();
+    
     return () => { mounted = false; };
   }, [router]);
 
