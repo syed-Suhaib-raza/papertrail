@@ -1,5 +1,5 @@
 // app/api/issues/[id]/route.ts
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -29,21 +29,20 @@ function isUuidLike(v: unknown) {
 }
 
 /**
- * Note: context may contain `params` which in some Next versions is a Promise.
- * We accept context as optional and safely await params if necessary.
+ * Accept NextRequest and context.params as a Promise per Next's generated types,
+ * await the params, then proceed with the existing logic.
  */
-export async function GET(req: Request, context: { params?: { id?: string } } = {}) {
-  // Resolve params safely (works whether params is a Promise or plain object)
-  let resolvedParams: any = context?.params;
+export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  // Resolve params (Next may provide a Promise)
+  let idFromParams: string | undefined;
   try {
-    // @ts-ignore - params can be a Promise in some Next versions
-    resolvedParams = await resolvedParams;
+    const resolved = await context.params;
+    idFromParams = resolved?.id;
   } catch {
-    // ignore - we'll fallback to URL parsing below
+    idFromParams = undefined;
   }
 
-  const idFromParams = resolvedParams?.id;
-  const idFromUrl = extractIdFromUrl(req.url);
+  const idFromUrl = extractIdFromUrl(request.url);
   const id = idFromParams ?? idFromUrl ?? null;
 
   console.log('GET /api/issues/[id] resolved id:', { idFromParams, idFromUrl, final: id });

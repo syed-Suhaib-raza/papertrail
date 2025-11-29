@@ -1,5 +1,5 @@
 // app/api/issues/[id]/publish/route.ts
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -23,7 +23,7 @@ function extractIdFromUrl(url: string) {
     if (publishIdx > 0) return parts[publishIdx - 1];
     const issuesIdx = parts.lastIndexOf('issues');
     if (issuesIdx >= 0 && parts.length > issuesIdx + 1) return parts[issuesIdx + 1];
-    return parts[parts.length - 1];
+    return parts[parts.length - 1] ?? null;
   } catch {
     return null;
   }
@@ -33,18 +33,21 @@ function isUuidLike(v: unknown) {
   return typeof v === 'string' && v.trim() !== '' && v.toLowerCase() !== 'undefined' && /^[0-9a-fA-F-]{6,}$/.test(v);
 }
 
-export async function POST(req: Request, context: { params?: { id?: string } } = {}) {
-  // resolve params safely (works if params is a Promise or plain object)
-  let resolvedParams: any = context?.params;
+/**
+ * Accept NextRequest and context.params as a Promise per Next's generated types,
+ * then await the params and continue with the original logic.
+ */
+export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  // resolve params promise (Next may provide a Promise here)
+  let idFromParams: string | undefined;
   try {
-    // @ts-ignore - params may be a Promise in some Next versions
-    resolvedParams = await resolvedParams;
+    const resolved = await context.params;
+    idFromParams = resolved?.id;
   } catch {
-    // ignore; fallback to url
+    idFromParams = undefined;
   }
 
-  const idFromParams = resolvedParams?.id;
-  const idFromUrl = extractIdFromUrl(req.url);
+  const idFromUrl = extractIdFromUrl(request.url);
   const id = idFromParams ?? idFromUrl ?? null;
 
   if (!id || !isUuidLike(id)) {

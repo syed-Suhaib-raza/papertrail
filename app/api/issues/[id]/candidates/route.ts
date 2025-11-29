@@ -1,5 +1,5 @@
 // app/api/issues/[id]/candidates/route.ts
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -29,18 +29,21 @@ function isUuidLike(v: unknown) {
   return /^[0-9a-fA-F-]{6,}$/.test(v);
 }
 
-export async function GET(req: Request, { params }: { params?: { id?: string } } = {}) {
-  // Resolve params (works if params is a Promise or an object)
-  let resolvedParams: any = params;
+/**
+ * Next's generated route types expect `context.params` to be a Promise for dynamic routes.
+ * So accept `context: { params: Promise<{ id: string }> }` and await it.
+ */
+export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  // resolve params (works if Next provides a Promise)
+  let idFromParams: string | undefined;
   try {
-    // @ts-ignore - params may be a Promise in some Next versions
-    resolvedParams = await params;
+    const resolved = await context.params;
+    idFromParams = resolved?.id;
   } catch {
-    // ignore — we'll fallback to URL parsing
+    idFromParams = undefined;
   }
 
-  const idFromParams = resolvedParams?.id;
-  const idFromUrl = extractIdFromUrl(req.url);
+  const idFromUrl = extractIdFromUrl(request.url);
   const issueId = idFromParams ?? idFromUrl ?? null;
 
   if (!issueId || !isUuidLike(issueId)) {

@@ -1,5 +1,5 @@
 // app/api/issues/[id]/papers/route.ts
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -29,19 +29,21 @@ function isUuidLike(v: unknown) {
   return /^[0-9a-fA-F-]{6,}$/.test(v);
 }
 
-export async function GET(req: Request, { params }: { params?: { id?: string } } = {}) {
-  // Resolve params (works if params is a Promise or an object)
-  let resolvedParams: any = params;
+/**
+ * Accept NextRequest and context.params as a Promise (per Next's generated types),
+ * then await the params and continue with the existing logic.
+ */
+export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  // resolve params promise (Next may provide a Promise here)
+  let idFromParams: string | undefined;
   try {
-    // In some Next versions params may be a Promise — await it safely.
-    // @ts-ignore
-    resolvedParams = await params;
+    const resolved = await context.params;
+    idFromParams = resolved?.id;
   } catch {
-    // ignore; we'll fallback to URL parsing
+    idFromParams = undefined;
   }
 
-  const idFromParams = resolvedParams?.id;
-  const idFromUrl = extractIdFromUrl(req.url);
+  const idFromUrl = extractIdFromUrl(request.url);
   const issueId = idFromParams ?? idFromUrl ?? null;
 
   console.log('Resolved issueId:', issueId);
@@ -70,7 +72,7 @@ export async function GET(req: Request, { params }: { params?: { id?: string } }
       return NextResponse.json([]);
     }
 
-    // Fetch papers by array of ids (safe because we ensured array length > 0)
+    // Fetch papers by array of ids
     const { data: papers, error: papersErr } = await supabase
       .from('papers')
       .select('id, title, status, created_by')
@@ -81,7 +83,7 @@ export async function GET(req: Request, { params }: { params?: { id?: string } }
       return NextResponse.json({ message: papersErr.message }, { status: 500 });
     }
 
-    // Optional: preserve original order by mapping paperIds
+    // preserve original order by mapping paperIds
     const papersById = (papers ?? []).reduce((acc: Record<string, any>, p: any) => {
       acc[p.id] = p;
       return acc;

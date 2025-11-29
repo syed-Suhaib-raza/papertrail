@@ -1,5 +1,5 @@
 // app/api/issues/[id]/add-paper/route.ts
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -31,20 +31,21 @@ function isUuidLike(v: unknown) {
   return /^[0-9a-fA-F-]{6,}$/.test(v);
 }
 
-export async function POST(req: Request, { params }: { params?: { id?: string } } = {}) {
-  // 1) resolve params (handles Promise or plain object)
-  let resolvedParams: any = params;
+/**
+ * Note: Next's generated type for this route expects `context.params` to be a Promise.
+ * So we accept `context: { params: Promise<{ id: string }> }` and `await` it.
+ */
+export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  // resolve params promise (Next may provide a Promise here per type checks)
+  let idFromParams: string | undefined;
   try {
-    // if params is a Promise, await it; otherwise this resolves immediately
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-ignore
-    resolvedParams = await params;
+    const resolved = await context.params;
+    idFromParams = resolved?.id;
   } catch {
-    // ignore - we'll fallback to URL parsing below
+    idFromParams = undefined;
   }
 
-  const idFromParams = resolvedParams?.id;
-  const idFromUrl = extractIdFromUrl(req.url);
+  const idFromUrl = extractIdFromUrl(request.url);
   const issueId = idFromParams ?? idFromUrl ?? null;
 
   if (!issueId || !isUuidLike(issueId)) {
@@ -52,8 +53,14 @@ export async function POST(req: Request, { params }: { params?: { id?: string } 
   }
 
   try {
-    // parse body
-    const body = await req.json().catch(() => ({}));
+    // parse body (defensive)
+    let body: any = {};
+    try {
+      body = await request.json();
+    } catch {
+      body = {};
+    }
+
     const { paper_id } = body ?? {};
     if (!paper_id || !isUuidLike(paper_id)) {
       return NextResponse.json({ message: 'paper_id required and must be a valid id' }, { status: 400 });
@@ -109,12 +116,11 @@ export async function POST(req: Request, { params }: { params?: { id?: string } 
       .maybeSingle();
 
     if (error) {
-      // Unique / FK / other constraints bubble up here. Detect dup by message if possible.
-      const msg = error.message ?? String(error);
-      if (msg.toLowerCase().includes('duplicate') || msg.toLowerCase().includes('unique')) {
+      const msg = (error.message ?? String(error)).toLowerCase();
+      if (msg.includes('duplicate') || msg.includes('unique')) {
         return NextResponse.json({ message: 'Paper already added to this issue' }, { status: 409 });
       }
-      return NextResponse.json({ message: 'Failed to add paper', details: msg }, { status: 400 });
+      return NextResponse.json({ message: 'Failed to add paper', details: error.message ?? String(error) }, { status: 400 });
     }
 
     return NextResponse.json(data ?? { issue_id: issueId, paper_id, position: nextPos });

@@ -1,6 +1,5 @@
 // app/api/papers/[paperId]/versions/route.ts
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
 function makeSupabaseClientWithToken(token: string) {
@@ -19,35 +18,38 @@ function isNonEmptyString(v: any): v is string {
   return typeof v === 'string' && v.trim() !== '';
 }
 
-export async function POST(req: NextRequest, { params }: { params?: { paperId?: string } } = {}) {
+/**
+ * Accept NextRequest and context.params as a Promise per Next's generated types.
+ * Await params, fall back to pathname parsing, then proceed with the original logic.
+ */
+export async function POST(request: NextRequest, context: { params: Promise<{ paperId: string }> }) {
   try {
-    const authHeader = req.headers.get('authorization') || '';
+    const authHeader = request.headers.get('authorization') || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
     if (!token) return NextResponse.json({ message: 'Missing authorization token' }, { status: 401 });
 
-    // Attempt to get paperId from params first, then fall back to parsing the pathname
-    let paperId: string | undefined = params?.paperId;
-    console.log('DEBUG (server) initial params:', params);
-
-    if (!isNonEmptyString(paperId)) {
-      // req.nextUrl is available in NextRequest; fallback to pathname parsing
-      const pathname = (req.nextUrl && req.nextUrl.pathname) || new URL(req.url).pathname;
-      console.log('DEBUG (server) req.pathname fallback:', pathname);
-
-      const m = pathname.match(/\/api\/papers\/([^\/]+)\/versions\/?$/);
-      if (m && m[1]) {
-        paperId = decodeURIComponent(m[1]);
-      }
+    // Resolve paperId from context.params (which may be a Promise) or fallback to pathname parsing
+    let paperId: string | undefined;
+    try {
+      const resolved = await context.params;
+      paperId = resolved?.paperId;
+    } catch {
+      paperId = undefined;
     }
 
-    console.log('DEBUG (server) resolved paperId:', paperId);
+    if (!isNonEmptyString(paperId)) {
+      const pathname = (request.nextUrl && request.nextUrl.pathname) || new URL(request.url).pathname;
+      const m = pathname.match(/\/api\/papers\/([^\/]+)\/versions\/?$/);
+      if (m && m[1]) paperId = decodeURIComponent(m[1]);
+    }
+
     if (!isNonEmptyString(paperId)) {
       return NextResponse.json({ message: 'Invalid or missing paperId' }, { status: 400 });
     }
 
     const supabaseServer = makeSupabaseClientWithToken(token);
 
-    const raw = await req.json().catch(() => ({}));
+    const raw = await request.json().catch(() => ({}));
     const storage_path = typeof raw.storage_path === 'string' ? raw.storage_path.trim() : null;
     const notes = raw.notes ?? null;
     const file_mime = raw.file_mime ?? null;
@@ -124,6 +126,6 @@ export async function POST(req: NextRequest, { params }: { params?: { paperId?: 
     return NextResponse.json({ ok: true, version: verInsert });
   } catch (err: any) {
     console.error('version route error', err);
-    return NextResponse.json({ message: err?.message || 'Server error', detail: err }, { status: 500 });
+    return NextResponse.json({ message: err?.message || 'Server error', detail: String(err) }, { status: 500 });
   }
 }
