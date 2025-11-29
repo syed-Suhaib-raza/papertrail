@@ -20,7 +20,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing bearer token' }, { status: 401 });
     }
 
-    // 2. Create auth client using token (Supabase v2 style)
+    // 2. Create auth client using token (for verifying the caller)
     const supabaseForAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: { persistSession: false },
       global: {
@@ -82,59 +82,23 @@ export async function POST(req: Request) {
     }
 
     // ===================================================================
-    // ACTION: APPROVE = publish + add to issue
+    // ACTION: APPROVE -> mark as 'accepted' ONLY
     // ===================================================================
+    if (action === 'approve') {
+      const { error: updErr } = await supabaseAdmin
+        .from('papers')
+        .update({ status: 'accepted' })
+        .eq('id', paperId);
 
-    // 6. Publish the paper
-    const { error: pubErr } = await supabaseAdmin
-      .from('papers')
-      .update({ status: 'published', published_date: new Date().toISOString() })
-      .eq('id', paperId);
-
-    if (pubErr) {
-      return NextResponse.json({ error: 'Failed to publish', details: pubErr.message }, { status: 500 });
-    }
-
-    // 7. Find an existing unpublished issue OR create one
-    const { data: issues } = await supabaseAdmin
-      .from('issues')
-      .select('id')
-      .eq('published', false)
-      .limit(1);
-
-    let issueId = issues?.[0]?.id ?? null;
-
-    if (!issueId) {
-      // Create a placeholder issue
-      const { data: newIssue, error: issueErr } = await supabaseAdmin
-        .from('issues')
-        .insert({
-          title: 'Unscheduled Issue',
-          type: 'journal',
-          scheduled_release_date: new Date().toISOString(),
-        })
-        .select()
-        .single();
-
-      if (issueErr) {
-        return NextResponse.json({ error: 'Failed to create issue', details: issueErr.message }, { status: 500 });
+      if (updErr) {
+        return NextResponse.json({ error: 'Failed to accept paper', details: updErr.message }, { status: 500 });
       }
 
-      issueId = newIssue.id;
+      return NextResponse.json({ success: true, action: 'accepted', paperId });
     }
 
-    // 8. Add the paper to the issue
-    await supabaseAdmin.from('issue_papers').insert({
-      issue_id: issueId,
-      paper_id: paperId,
-    });
-
-    return NextResponse.json({
-      success: true,
-      action: 'published',
-      paperId,
-      issueId,
-    });
+    // shouldn't reach here
+    return NextResponse.json({ error: 'Unhandled action' }, { status: 400 });
   } catch (err: any) {
     console.error(err);
     return NextResponse.json({ error: 'Server error', details: String(err) }, { status: 500 });

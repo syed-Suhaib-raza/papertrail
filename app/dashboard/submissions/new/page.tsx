@@ -148,12 +148,16 @@ export default function NewPaperPageClient() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium">Category</label>
-            <input
+            <label className="block text-sm mb-1">Specialty</label>
+            <select
+              className="select select-bordered w-full"
               value={categoryId ?? ''}
-              onChange={(e) => setCategoryId(e.target.value || null)}
-              className="mt-1 block w-full rounded-md border p-2"
-            />
+              onChange={(e) => setCategoryId(e.target.value)}
+            >
+              <option value="1">Artificial Intelligence</option>
+              <option value="2">Mathematics</option>
+              <option value="3">Computer Networks</option>
+            </select>
           </div>
         </div>
 
