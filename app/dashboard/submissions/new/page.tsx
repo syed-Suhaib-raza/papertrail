@@ -10,6 +10,10 @@ export default function NewPaperPageClient() {
   const [keywords, setKeywords] = useState('');
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
+
+  // NEW
+  const [citations, setCitations] = useState('');
+
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -18,13 +22,14 @@ export default function NewPaperPageClient() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setErrorMsg(null);
+
     if (!title.trim()) return setErrorMsg('Title is required');
     if (!file) return setErrorMsg('PDF file is required');
 
     setLoading(true);
 
     try {
-      // get user + token
+      // Get user + token
       const { data: userData } = await supabase.auth.getUser();
       const user = userData?.user;
       const session = (await supabase.auth.getSession()).data?.session;
@@ -36,24 +41,19 @@ export default function NewPaperPageClient() {
         return;
       }
 
-      // upload file to Storage
+      // Upload PDF
       let storagePath: string | null = null;
+
       if (file) {
         const filename = `${crypto.randomUUID()}-${file.name}`;
         const path = `${user.id}/papers/${filename}`;
-
-        console.log("Uploading to path:", path);
 
         const upload = await supabase.storage
           .from('papers')
           .upload(path, file, { cacheControl: '3600', upsert: false });
 
-        console.log("Supabase upload response:", upload);
-
         if (upload.error) {
-          console.error("Supabase upload.error:", upload.error);
-          const errMsg = upload.error?.message || JSON.stringify(upload.error);
-          setErrorMsg(`Failed to upload file: ${errMsg}`);
+          setErrorMsg(`Failed to upload file: ${upload.error.message}`);
           setLoading(false);
           return;
         }
@@ -61,12 +61,20 @@ export default function NewPaperPageClient() {
         storagePath = path;
       }
 
-      // 🔥 DEBUG FETCH BLOCK
-      // debug: show session + token
-      const sessionResp = await supabase.auth.getSession();
-      console.log('DEBUG: client sessionResp:', sessionResp);
-      console.log('DEBUG: client accessToken (will be sent to API):', accessToken);
+      // Parse citations
+      const citationsArray = citations
+        .split('\n')
+        .map((ln) => ln.trim())
+        .filter(Boolean)
+        .map((ln) => {
+          const parts = ln.split('||').map((p) => p.trim());
+          return {
+            cited_text: parts[0],
+            cited_doi: parts[1] || null,
+          };
+        });
 
+      // Submit to API
       const res = await fetch('/api/submit-paper', {
         method: 'POST',
         headers: {
@@ -78,34 +86,19 @@ export default function NewPaperPageClient() {
           abstract: abstract || null,
           keywords: keywords || null,
           category_id: categoryId || null,
-          storage_path: storagePath
+          storage_path: storagePath,
+          citations: citationsArray
         })
       });
 
-      console.log('submit-paper response status:', res.status, res.statusText);
-
-      let body;
-      try {
-        body = await res.json();
-        console.log('submit-paper response body:', body);
-      } catch (err) {
-        console.warn('submit-paper non-JSON response', err);
-        body = null;
-      }
+      const body = await res.json();
 
       if (!res.ok) {
-        console.error("submit error full:", { status: res.status, body });
-        const errMsg =
-          body?.message ||
-          body?.detail ||
-          JSON.stringify(body) ||
-          'Server failed';
-        throw new Error(errMsg);
+        throw new Error(body?.message || 'Submission failed');
       }
 
       router.push('/dashboard/submissions');
     } catch (err: any) {
-      console.error("submit error", err);
       setErrorMsg(err.message || 'Failed to submit');
     } finally {
       setLoading(false);
@@ -118,6 +111,7 @@ export default function NewPaperPageClient() {
 
       <form onSubmit={handleSubmit} className="space-y-4">
 
+        {/* TITLE */}
         <div>
           <label className="block text-sm font-medium">Title *</label>
           <input
@@ -127,6 +121,7 @@ export default function NewPaperPageClient() {
           />
         </div>
 
+        {/* ABSTRACT */}
         <div>
           <label className="block text-sm font-medium">Abstract</label>
           <textarea
@@ -137,7 +132,9 @@ export default function NewPaperPageClient() {
           />
         </div>
 
+        {/* KEYWORDS + CATEGORY */}
         <div className="grid grid-cols-2 gap-4">
+
           <div>
             <label className="block text-sm font-medium">Keywords</label>
             <input
@@ -154,13 +151,16 @@ export default function NewPaperPageClient() {
               value={categoryId ?? ''}
               onChange={(e) => setCategoryId(e.target.value)}
             >
+              <option value="">Select category</option>
               <option value="1">Artificial Intelligence</option>
               <option value="2">Mathematics</option>
               <option value="3">Computer Networks</option>
             </select>
           </div>
+
         </div>
 
+        {/* PDF UPLOAD */}
         <div>
           <label className="block text-sm font-medium">Manuscript (PDF)</label>
           <input
@@ -171,12 +171,29 @@ export default function NewPaperPageClient() {
           />
         </div>
 
-        {errorMsg && (
-          <div className="text-red-600">
-            {errorMsg}
+        {/* CITATIONS (NEW) */}
+        <div>
+          <label className="block text-sm font-medium">Citations (one per line)</label>
+          <div className="text-xs text-gray-500 mb-1">
+            Format:  
+            <br />
+            <code>Author (Year). Title || DOI</code>
           </div>
+          <textarea
+            value={citations}
+            onChange={(e) => setCitations(e.target.value)}
+            rows={4}
+            className="mt-1 block w-full rounded-md border p-2"
+            placeholder={`Smith J. (2020). Research on X || 10.1234/abcd\nDoe A. (2019). Another Citation`}
+          />
+        </div>
+
+        {/* ERRORS */}
+        {errorMsg && (
+          <div className="text-red-600">{errorMsg}</div>
         )}
 
+        {/* BUTTONS */}
         <div className="flex gap-2">
           <button
             type="submit"

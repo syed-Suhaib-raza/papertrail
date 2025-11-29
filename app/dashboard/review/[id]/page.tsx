@@ -398,6 +398,33 @@ export default function ReviewWorkspaceClient() {
         )}
       </div>
 
+      {/* --- Citations display (added) --- */}
+      {assignment.paper?.citations && Array.isArray(assignment.paper.citations) && assignment.paper.citations.length > 0 && (
+        <div className="mt-4 p-4 bg-gray-50 border rounded">
+          <h2 className="text-sm font-semibold mb-2">Citations</h2>
+          <ul className="list-decimal ml-5 space-y-2">
+            {assignment.paper.citations.map((c: any) => (
+              <li key={c.id} className="text-sm">
+                <div>{c.cited_text}</div>
+                {c.cited_doi && (
+                  <div className="text-xs mt-1">
+                    <a
+                      href={`https://doi.org/${encodeURIComponent(c.cited_doi)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="underline"
+                    >
+                      DOI: {c.cited_doi}
+                    </a>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {/* --- end citations --- */}
+
       <div className="mt-4">
         <label className="block text-sm font-medium">Your review</label>
         <textarea

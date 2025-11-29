@@ -32,7 +32,7 @@ export async function GET(req: Request, context: { params: any }) {
     // Get assignment by id (maybeSingle avoids throwing when not found)
     const { data, error } = await srv
       .from('review_assignments')
-      .select(`*, papers ( id, title, abstract, current_version )`)
+      .select(`*, papers ( id, title, abstract, current_version, citations ( id, cited_text, cited_doi ) )`)
       .eq('id', assignmentId)
       .maybeSingle();
 

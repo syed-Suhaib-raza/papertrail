@@ -24,7 +24,14 @@ export async function POST(req: NextRequest) {
     const supabaseServer = makeSupabaseClientWithToken(token);
 
     const body = await req.json().catch(() => ({}));
-    const { title, abstract = null, keywords = null, category_id = null, storage_path = null } = body;
+    const {
+      title,
+      abstract = null,
+      keywords = null,
+      category_id = null,
+      storage_path = null,
+      citations = null // <-- added: expect array of { cited_text, cited_doi|null }
+    } = body;
 
     if (!title || typeof title !== 'string') return NextResponse.json({ message: 'Title required' }, { status: 400 });
 
@@ -68,6 +75,28 @@ export async function POST(req: NextRequest) {
         }
       ]);
       if (v.error) console.warn('paper_versions insert warning', v.error);
+    }
+
+    // Insert citations if provided
+    if (Array.isArray(citations) && citations.length > 0) {
+      // sanitize & map to DB columns
+      const toInsert = citations
+        .map((c: any) => {
+          if (!c) return null;
+          const cited_text = typeof c.cited_text === 'string' ? c.cited_text.trim() : null;
+          const cited_doi = typeof c.cited_doi === 'string' && c.cited_doi.trim() ? c.cited_doi.trim() : null;
+          if (!cited_text) return null;
+          return { paper_id: paperId, cited_text, cited_doi };
+        })
+        .filter(Boolean);
+
+      if (toInsert.length > 0) {
+        const { error: citeErr } = await supabaseServer.from('citations').insert(toInsert);
+        if (citeErr) {
+          // don't fail the whole submission for citation insert issues, but warn
+          console.warn('citations insert warning', citeErr);
+        }
+      }
     }
 
     const check = await supabaseServer.from('paper_checks').insert([{ paper_id: paperId, type: 'plagiarism', status: 'queued' }]);
