@@ -16,9 +16,8 @@ export default function EditorialDashboardPage() {
     { title: 'Decisions', desc: 'Make editorial decisions (accept/reject/revise)', href: '/dashboard/editorial/decisions' },
     { title: 'Issues', desc: 'Create and manage issues / proceedings', href: '/dashboard/editorial/issues' },
     { title: 'New Issue', desc: 'Create a new issue', href: '/dashboard/editorial/issues/new' },
-    { title: 'Editorial Board', desc: 'Manage editorial board members', href: '/dashboard/editorial/board' },
     { title: 'Analytics', desc: 'Reports: submissions, acceptance rates, reviewer stats', href: '/dashboard/editorial/analytics' },
-    { title: 'Plagiarism Reports', desc: 'View plagiarism checks', href: '/dashboard/editorial/plagiarism' },
+    { title: 'Plagiarism Reports', desc: 'View plagiarism checks', href: '/dashboard/editorial/plag' },
     { title: 'Issue Papers', desc: 'Assign papers to issues', href: '/dashboard/editorial/issues' }, // <- duplicate href intentionally or accidentally
     { title: 'Notifications', desc: 'Editor notifications', href: '/dashboard/notifications' },
     { title: 'Settings', desc: 'Editorial settings & roles', href: '/dashboard/settings' },
