@@ -95,7 +95,7 @@ export default async function HomePage() {
           </div>
 
           <div className="order-first md:order-last">
-            <div className="rounded-lg border border-slate-100 p-4 bg-gradient-to-b from-white to-slate-50">
+            <div className="rounded-lg border border-slate-100 p-4 bg-linear-to-b from-white to-slate-50">
               <h3 className="text-lg font-semibold">Quick links</h3>
               <ul className="mt-3 space-y-2 text-sm text-slate-700">
                 <li><Link href="/about" className="hover:underline">About PaperTrail</Link></li>
