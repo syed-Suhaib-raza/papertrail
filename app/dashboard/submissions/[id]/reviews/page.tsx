@@ -254,7 +254,7 @@ export default function AuthorReviewsPage() {
                 </div>
 
                 <div className="text-right">
-                  <Link href={`/dashboard/submissions/${p.id}`} className="text-sm underline">View submission</Link>
+                  <Link href={`/dashboard/submissions/${p.id}/edit`} className="text-sm underline">View submission</Link>
                   <div className="text-xs text-gray-500 mt-1">Submitted: {p.created_at ? new Date(p.created_at).toLocaleString() : '—'}</div>
                 </div>
               </div>
