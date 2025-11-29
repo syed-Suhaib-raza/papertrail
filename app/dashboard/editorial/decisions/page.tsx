@@ -14,13 +14,13 @@ type AssignmentRow = {
   reviewer_id: string;
   assigned_at: string | null;
   status: string;
-  papers?: any; // joined paper object/array
-  reviewers?: any; // joined reviewer object/array
-  reviews?: any; // joined reviews array or object
+  papers?: any;
+  reviewers?: any;
+  reviews?: any;
 };
 
 export default async function DecisionsIndexPage() {
-  // 1) fetch assignments with status = 'submitted' and join paper + reviewer + review info
+  // Fetch review assignments with submitted reviews
   const { data: assignmentsData, error: assignmentsErr } = await supabaseAdmin
     .from('review_assignments')
     .select(`
@@ -45,7 +45,7 @@ export default async function DecisionsIndexPage() {
     );
   }
 
-  const assignments: AssignmentRow[] = Array.isArray(assignmentsData) ? assignmentsData as AssignmentRow[] : [];
+  const assignments: AssignmentRow[] = Array.isArray(assignmentsData) ? assignmentsData : [];
 
   if (!assignments || assignments.length === 0) {
     return (
@@ -56,9 +56,10 @@ export default async function DecisionsIndexPage() {
     );
   }
 
-  // group assignments by paper_id and collect unique paper IDs
+  // Group by paper
   const byPaper = new Map<string, AssignmentRow[]>();
   const paperIds = new Set<string>();
+
   for (const a of assignments) {
     paperIds.add(a.paper_id);
     const arr = byPaper.get(a.paper_id) ?? [];
@@ -68,8 +69,8 @@ export default async function DecisionsIndexPage() {
 
   const paperIdList = Array.from(paperIds);
 
-  // fetch COI declarations for all these papers in one query
-  const { data: coisData, error: coisErr } = await supabaseAdmin
+  // Fetch COIs for all papers
+  const { data: coisData } = await supabaseAdmin
     .from('coi_declarations')
     .select(`
       id,
@@ -83,7 +84,7 @@ export default async function DecisionsIndexPage() {
     .in('paper_id', paperIdList)
     .order('declared_at', { ascending: false });
 
-  const cois: any[] = Array.isArray(coisData) ? coisData : [];
+  const cois = Array.isArray(coisData) ? coisData : [];
 
   const coisByPaper = new Map<string, any[]>();
   for (const c of cois) {
@@ -96,12 +97,12 @@ export default async function DecisionsIndexPage() {
     const assignmentsForPaper = byPaper.get(pid) ?? [];
     const rawPaperJoin = assignmentsForPaper[0]?.papers;
     const paperObj = Array.isArray(rawPaperJoin) ? rawPaperJoin[0] : rawPaperJoin;
-    const coisForPaper = coisByPaper.get(pid) ?? [];
+
     return {
       paperId: pid,
-      paper: paperObj ?? { id: pid, title: 'Untitled', abstract: null, status: null, created_at: null },
+      paper: paperObj ?? {},
       assignments: assignmentsForPaper,
-      cois: coisForPaper,
+      cois: coisByPaper.get(pid) ?? [],
     };
   });
 
@@ -115,8 +116,23 @@ export default async function DecisionsIndexPage() {
       <div className="space-y-4">
         {papersToRender.map((entry) => {
           const p = entry.paper;
+
+          // Determine card color based on status
+          const isPublished = p.status === 'published';
+          const isRejected = p.status === 'rejected';
+
+          let cardClass = "border rounded p-4 bg-white shadow-sm";
+          if (isPublished) {
+            cardClass = "border-green-200 bg-green-50 opacity-60 rounded p-4 shadow-sm";
+          } else if (isRejected) {
+            cardClass = "border-red-200 bg-red-50 opacity-60 rounded p-4 shadow-sm";
+          }
+
+          const disableActions = isPublished || isRejected;
+
           return (
-            <article key={entry.paperId} className="border rounded p-4 bg-white shadow-sm">
+            <article key={entry.paperId} className={cardClass}>
+              {/* Header */}
               <div className="flex items-start justify-between">
                 <div>
                   <h2 className="text-lg font-semibold">{p.title ?? 'Untitled'}</h2>
@@ -126,84 +142,94 @@ export default async function DecisionsIndexPage() {
                 </div>
 
                 <div className="text-right">
-                  <div className="text-sm text-gray-600 mb-2">Status: <strong>{p.status ?? '—'}</strong></div>
-                  <DecisionButtons paperId={entry.paperId} />
+                  <div className="text-sm text-gray-600 mb-2">
+                    Status: <strong>{p.status ?? '—'}</strong>
+                  </div>
+
+                  {/* Hide buttons if published or rejected */}
+                  {!disableActions && <DecisionButtons paperId={entry.paperId} />}
                 </div>
               </div>
 
+              {/* Abstract */}
               <div className="mt-3 text-sm text-gray-800">
                 <div><strong>Abstract:</strong></div>
-                <div className="mt-1 whitespace-pre-wrap text-gray-700">{p.abstract ?? '—'}</div>
+                <div className="mt-1 whitespace-pre-wrap text-gray-700">
+                  {p.abstract ?? '—'}
+                </div>
               </div>
 
+              {/* Reviews + COIs */}
               <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Reviews */}
                 <div>
-                  <h3 className="font-medium">Submitted reviews (assignments)</h3>
+                  <h3 className="font-medium">Submitted reviews</h3>
                   <div className="mt-2 space-y-2">
-                    {entry.assignments.map((a: AssignmentRow) => {
+                    {entry.assignments.map((a) => {
                       const reviewerJoin = Array.isArray(a.reviewers) ? a.reviewers[0] : a.reviewers;
 
-                      // Normalise reviews into an array (handles object or array)
-                      const reviewsArr: any[] = (() => {
-                        if (!a.reviews) return [];
-                        if (Array.isArray(a.reviews)) return a.reviews.filter(Boolean);
-                        return [a.reviews];
-                      })();
+                      // Normalize reviews array
+                      const reviewsArr = Array.isArray(a.reviews)
+                        ? a.reviews.filter(Boolean)
+                        : a.reviews ? [a.reviews] : [];
 
-                      // pick the most recent review by submitted_at (desc)
-                      let latestReview: any | null = null;
-                      if (reviewsArr.length) {
-                        reviewsArr.sort((r1, r2) => {
-                          const t1 = r1?.submitted_at ? new Date(r1.submitted_at).getTime() : 0;
-                          const t2 = r2?.submitted_at ? new Date(r2.submitted_at).getTime() : 0;
-                          return t2 - t1;
-                        });
+                      // Pick latest review
+                      let latestReview: any = null;
+                      if (reviewsArr.length > 0) {
+                        reviewsArr.sort((r1, r2) => new Date(r2.submitted_at).getTime() - new Date(r1.submitted_at).getTime());
                         latestReview = reviewsArr[0];
                       }
 
                       const recommendation = latestReview?.recommendation ?? '—';
-                      const overallScore = latestReview?.overall_score ?? null;
+                      const overallScore = latestReview?.overall_score ?? '—';
                       const submittedAt = latestReview?.submitted_at ?? null;
 
                       return (
                         <div key={a.id} className="p-2 border rounded bg-gray-50">
                           <div className="flex items-center justify-between">
                             <div>
-                              <div className="text-sm"><strong>Reviewer:</strong> {reviewerJoin?.full_name ?? reviewerJoin?.email ?? a.reviewer_id}</div>
-                              <div className="text-xs text-gray-500">Assigned at: {a.assigned_at ? new Date(a.assigned_at).toLocaleString() : '—'}</div>
-                              <div className="text-xs text-gray-500">Assignment id: {a.id}</div>
+                              <div className="text-sm"><strong>Reviewer:</strong> {reviewerJoin?.full_name ?? reviewerJoin?.email}</div>
+                              <div className="text-xs text-gray-500">
+                                Assigned: {a.assigned_at ? new Date(a.assigned_at).toLocaleString() : '—'}
+                              </div>
                             </div>
 
                             <div className="text-right">
-                              <div className="text-sm"><strong>Decision:</strong> {String(recommendation)}</div>
-                              <div className="text-sm"><strong>Score:</strong> {overallScore !== null && overallScore !== undefined ? String(overallScore) : '—'}</div>
-                              <div className="text-xs text-gray-400 mt-1">{submittedAt ? `Submitted ${new Date(submittedAt).toLocaleString()}` : ''}</div>
+                              <div className="text-sm"><strong>Decision:</strong> {recommendation}</div>
+                              <div className="text-sm"><strong>Score:</strong> {overallScore}</div>
+                              {submittedAt && (
+                                <div className="text-xs text-gray-400 mt-1">
+                                  Submitted {new Date(submittedAt).toLocaleString()}
+                                </div>
+                              )}
                             </div>
                           </div>
-
-                          {latestReview?.review_text && (
-                            <div className="mt-2 text-sm text-gray-700">
-                              <strong>Excerpt:</strong>
-                              <div className="mt-1 line-clamp-3">{latestReview.review_text}</div>
-                            </div>
-                          )}
                         </div>
                       );
                     })}
                   </div>
                 </div>
 
+                {/* COIs */}
                 <div>
-                  <h3 className="font-medium">COI declarations for this paper</h3>
+                  <h3 className="font-medium">COI declarations</h3>
                   <div className="mt-2 space-y-2">
-                    {entry.cois.length === 0 && <div className="text-gray-600">No COIs declared.</div>}
-                    {entry.cois.map((c: any) => {
+                    {entry.cois.length === 0 && (
+                      <div className="text-gray-600">No COIs declared.</div>
+                    )}
+
+                    {entry.cois.map((c) => {
                       const who = Array.isArray(c.profiles) ? c.profiles[0] : c.profiles;
+
                       return (
                         <div key={c.id} className="p-2 border rounded bg-gray-50">
-                          <div className="text-sm"><strong>{who?.full_name ?? who?.email ?? c.user_id}</strong></div>
-                          <div className="text-xs text-gray-500">Role: {c.role} · Declared: {c.declared_at ? new Date(c.declared_at).toLocaleString() : '—'}</div>
-                          <div className="mt-1 text-sm whitespace-pre-wrap">{c.statement || 'No conflict stated'}</div>
+                          <div className="text-sm"><strong>{who?.full_name ?? who?.email}</strong></div>
+                          <div className="text-xs text-gray-500">
+                            Role: {c.role} · {c.declared_at ? new Date(c.declared_at).toLocaleString() : ''}
+                          </div>
+                          <div className="mt-1 text-sm whitespace-pre-wrap">
+                            {c.statement || 'No conflict stated'}
+                          </div>
                         </div>
                       );
                     })}
