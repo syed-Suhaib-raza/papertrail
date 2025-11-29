@@ -4,6 +4,7 @@
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import Navbar from "@/components/Navbar";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -13,25 +14,50 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     let isMounted = true;
 
     async function check() {
-      const { data } = await supabase.auth.getSession();
-      if (!isMounted) return;
-      if (!data.session) {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!isMounted) return;
+
+        if (!data?.session) {
+          // send user to auth flow
+          router.push("/(auth)/login");
+        } else {
+          // optionally: you could verify profile existence here if you want
+          // const user = data.session.user;
+          // fetch profiles where auth_id = user.id ...
+        }
+      } catch (err) {
+        // if anything goes wrong, send to login
         router.push("/(auth)/login");
-      } else {
-        // Optionally: ensure profile exists here as well
+      } finally {
+        if (isMounted) setLoading(false);
       }
-      setLoading(false);
     }
     check();
 
-    // Subscribe to auth changes (optional)
-    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!session) router.push("/login");
+    // subscribe to auth state changes so we can redirect on sign-out
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!session) {
+        router.push("/(auth)/login");
+      }
     });
 
     return () => {
       isMounted = false;
-      sub.subscription.unsubscribe();
+      // defensive unsubscribe: different supabase client versions expose unsubscribe differently
+      try {
+        // v2-style: authListener.subscription.unsubscribe()
+        // @ts-ignore
+        authListener?.subscription?.unsubscribe?.();
+      } catch {
+        try {
+          // fallback: authListener.unsubscribe()
+          // @ts-ignore
+          authListener?.unsubscribe?.();
+        } catch {
+          // ignore
+        }
+      }
     };
   }, [router]);
 
@@ -39,5 +65,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return <div className="min-h-screen flex items-center justify-center">Loading…</div>;
   }
 
-  return <div>{children}</div>;
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <Navbar />
+      <main className="max-w-7xl mx-auto p-6">
+        {children}
+      </main>
+    </div>
+  );
 }
